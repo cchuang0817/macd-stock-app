@@ -91,36 +91,21 @@ def passed_strategy(df: pd.DataFrame) -> bool:
 
     return crossed and positive_zone and negative and shrinking and near_zero
 
-# ------------------ 公司基本資料 ------------------
-def fetch_company_info(ticker: str) -> dict:
-    url = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
-    params = {"modules": "price,summaryProfile"}
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        r = requests.get(url, params=params, headers=headers, timeout=10)
-        if r.status_code != 200:
-            return {"Name": "N/A", "Industry": "N/A", "MarketCap": "N/A"}
-        result = r.json().get("quoteSummary", {}).get("result")
-        if not result:
-            return {"Name": "N/A", "Industry": "N/A", "MarketCap": "N/A"}
-        data = result[0]
+# ------------------ 讀取 company_info.csv ------------------
+def load_company_info(file_path="company_info.csv") -> pd.DataFrame:
+    path = Path(file_path)
+    if not path.exists():
+        return pd.DataFrame(columns=["Ticker", "Name", "Industry"])
+    return pd.read_csv(path)
 
-        name = (
-            data.get("price", {}).get("longName")
-            or data.get("price", {}).get("shortName")
-            or "N/A"
-        )
-        marketcap = data.get("price", {}).get("marketCap", {}).get("raw")
-        if marketcap:
-            marketcap = f"{marketcap/1e9:.1f}B"
-        else:
-            marketcap = "N/A"
-
-        industry = data.get("summaryProfile", {}).get("industry", "N/A")
-
-        return {"Name": name, "Industry": industry, "MarketCap": marketcap}
-    except Exception:
-        return {"Name": "N/A", "Industry": "N/A", "MarketCap": "N/A"}
+def get_company_info(ticker: str, company_df: pd.DataFrame) -> dict:
+    if not company_df.empty and ticker in company_df["Ticker"].values:
+        row = company_df.loc[company_df["Ticker"] == ticker].iloc[0]
+        return {
+            "Name": row.get("Name", "N/A"),
+            "Industry": row.get("Industry", "N/A")
+        }
+    return {"Name": "N/A", "Industry": "N/A"}
 
 # ------------------ 股票清單讀取 ------------------
 def load_tickers(file_path="tickers_tw.txt") -> list[str]:
@@ -143,6 +128,9 @@ if not tickers:
     st.error("⚠️ 找不到 tickers_tw.txt 或檔案內容是空的，請建立股票代號清單")
     st.stop()
 
+# 讀取公司基本資料
+company_df = load_company_info()
+
 results = []
 
 with st.spinner("正在篩選股票，請稍候..."):
@@ -155,13 +143,12 @@ with st.spinner("正在篩選股票，請稍候..."):
         ok = passed_strategy(macd_df)
         last = macd_df.tail(1).iloc[0]
 
-        info = fetch_company_info(t)
+        info = get_company_info(t, company_df)
 
         results.append({
             "Ticker": t,
             "Name": info["Name"],
             "Industry": info["Industry"],
-            "MarketCap": info["MarketCap"],
             "Match": ok,
             "Close": round(float(last["Close"]), 2),
             "MACD": round(float(last["MACD"]), 4),
