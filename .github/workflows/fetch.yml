@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑 (UTC+0 +8hr)
   workflow_dispatch:         # 手動觸發
+  
+permissions:
+  contents: write   # 允許 Actions push 回 repo
 
 jobs:
   fetch:
