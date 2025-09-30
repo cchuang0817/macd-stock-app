@@ -3,6 +3,14 @@ import requests
 import pandas as pd
 from pathlib import Path
 
+# 民國 → 西元
+def roc_to_ad(date_str):
+    parts = date_str.split("/")
+    if len(parts) == 3:
+        year = int(parts[0]) + 1911
+        return f"{year}-{parts[1]}-{parts[2]}"
+    return None
+
 # 下載單一股票某月份的資料
 def fetch_monthly(stock_no, year, month):
     url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={year}{month:02d}01&stockNo={stock_no}"
@@ -17,12 +25,17 @@ def fetch_monthly(stock_no, year, month):
         return None
 
     df = pd.DataFrame(data["data"], columns=data["fields"])
-    df["Date"] = pd.to_datetime(df["日期"].str.replace("/", "-"), errors="coerce")
+
+    # 民國 → 西元日期
+    df["Date"] = df["日期"].apply(roc_to_ad)
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    # 收盤價 → 數字
     df["Close"] = pd.to_numeric(df["收盤價"].str.replace(",", ""), errors="coerce")
+
     return df[["Date", "Close"]]
 
-
-# 確保 CSV 存在（如果沒有就建立空檔）
+# 確保 CSV 存在
 def ensure_csv_exists(ticker, data_dir="data"):
     os.makedirs(data_dir, exist_ok=True)
     file_path = Path(data_dir) / f"{ticker}.csv"
@@ -30,7 +43,6 @@ def ensure_csv_exists(ticker, data_dir="data"):
         pd.DataFrame(columns=["Date", "Close"]).to_csv(file_path, index=False, encoding="utf-8-sig")
         print(f"{ticker}: 建立空檔案")
     return file_path
-
 
 # 主程式：針對 1101.TW，逐月更新
 def main():
@@ -46,14 +58,13 @@ def main():
         # 讀取舊資料
         df_old = pd.read_csv(file_path, parse_dates=["Date"]) if file_path.exists() else pd.DataFrame(columns=["Date", "Close"])
 
-        # 合併並去重
+        # 合併去重
         df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(subset=["Date"])
         df_all = df_all.sort_values("Date")
 
-        # 覆蓋回存
+        # 回存
         df_all.to_csv(file_path, index=False, encoding="utf-8-sig")
         print(f"{ticker}: {month} 月完成，累計 {len(df_all)} 筆")
-
 
 if __name__ == "__main__":
     main()
