@@ -3,7 +3,7 @@ import requests
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta
-from finmind.data import DataLoader
+from FinMind.data import DataLoader
 
 # ====== TWSE API (上市) ======
 def fetch_twse(stock_id, date):
