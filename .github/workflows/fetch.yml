@@ -2,11 +2,8 @@ name: Fetch Stock Data
 
 on:
   schedule:
-    - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑 (UTC+0 +8hr)
-  workflow_dispatch:        # 手動觸發
-
-permissions:
-  contents: write   # 允許 GitHub Actions Bot 寫入 Repo
+    - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑 (UTC+0 加8hr)
+  workflow_dispatch:         # 手動觸發
 
 jobs:
   fetch:
@@ -26,10 +23,13 @@ jobs:
       - name: Run fetch_stock_data
         run: python fetch_stock_data.py
 
+      - name: Ensure data folder exists
+        run: mkdir -p data
+
       - name: Commit and push results
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/*.csv
+          git add data/*.csv || echo "No CSV files to add"
           git commit -m "Update stock data [skip ci]" || echo "No changes to commit"
           git push
