@@ -2,7 +2,7 @@ name: Fetch Stock Data
 
 on:
   schedule:
-    - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑 (UTC+0 加8hr)
+    - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑 (UTC+0 +8hr)
   workflow_dispatch:         # 手動觸發
 
 jobs:
@@ -21,7 +21,6 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-          pip install FinMind  # 確保 FinMind 一定被裝上
 
       - name: Ensure data folder exists
         run: mkdir -p data
