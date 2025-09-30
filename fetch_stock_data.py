@@ -30,8 +30,9 @@ def save_to_csv(ticker, df):
     print(f"{ticker} 儲存 {len(merged)} 筆資料 (本次新增 {new_count} 筆)")
 
 def main():
-    # TODO: 這裡你可以改成讀 company_info.csv 裡的股票清單
-    tickers = ["1101.TW", "5483.TWO"]  
+    # 從 company_info.csv 讀股票清單
+    company_df = pd.read_csv("company_info.csv")
+    tickers = company_df["ticker"].dropna().unique().tolist()
 
     today = datetime.today()
     six_months_ago = (today - timedelta(days=180)).strftime("%Y-%m-%d")
@@ -41,11 +42,11 @@ def main():
         file_path = Path(DATA_DIR) / f"{ticker}.csv"
 
         if file_path.exists():
-            # 已經有資料 → 只抓最新一天（避免重複下載）
+            # 已有資料 → 只抓最新日期之後的
             last_date = pd.read_csv(file_path, parse_dates=["Date"])["Date"].max()
             start_date = (last_date + timedelta(days=1)).strftime("%Y-%m-%d")
         else:
-            # 第一次抓 → 先抓過去 6 個月
+            # 第一次 → 抓 6 個月
             start_date = six_months_ago
 
         df = fetch_price(ticker, start=start_date, end=today_str)
