@@ -4,17 +4,14 @@ import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
 
-# 股票清單（從 company_info.csv 讀取）
 def load_tickers(file_path="company_info.csv"):
     df = pd.read_csv(file_path, encoding="utf-8-sig")
     return df["Ticker"].dropna().tolist()
 
-# 從 TWSE API 抓某個月的資料
 def fetch_twse(code, date_str):
-    url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={date_str}&stockNo={code}&response=json"
+    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={code}"
     resp = requests.get(url)
     data = resp.json()
-
     if "data" not in data:
         return pd.DataFrame()
 
@@ -23,31 +20,31 @@ def fetch_twse(code, date_str):
     df["Close"] = pd.to_numeric(df["收盤價"].str.replace(",", ""), errors="coerce")
     return df[["Date", "Close"]].dropna()
 
-# 抓取並儲存單一股票
 def fetch_stock_data(ticker, data_dir="data"):
     os.makedirs(data_dir, exist_ok=True)
     file_path = Path(data_dir) / f"{ticker}.csv"
     code = ticker.split(".")[0]
 
     today = datetime.today()
-    start_date = today.replace(day=1) - timedelta(days=180)  # 6 個月前的基準
+    start_date = today.replace(day=1) - timedelta(days=180)  # 6 個月前
 
     all_data = []
     d = start_date
     while d <= today:
-        first_day = d.replace(day=1)  # 當月 1 號
+        first_day = d.replace(day=1)
         date_str = first_day.strftime("%Y%m%d")
         df = fetch_twse(code, date_str)
         if not df.empty:
             all_data.append(df)
-        d += timedelta(days=32)  # 跳到下一個月
+        d += timedelta(days=32)  # 下一個月
 
     if not all_data:
         print(f"{ticker}: 沒有抓到資料")
         return
 
-    df_all = pd.concat(all_data, ignore_index=True).drop_duplicates(subset=["Date"])
-    df_all.sort_values("Date", inplace=True)
+    df_all = pd.concat(all_data, ignore_index=True)
+    df_all = df_all.drop_duplicates(subset=["Date"])
+    df_all = df_all.sort_values("Date")
     df_all.to_csv(file_path, index=False)
     print(f"{ticker} 更新完成，共 {len(df_all)} 筆")
 
