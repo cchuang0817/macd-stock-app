@@ -2,7 +2,6 @@ import os
 import requests
 import pandas as pd
 from pathlib import Path
-from datetime import datetime
 
 # 下載單一股票某月份的資料
 def fetch_monthly(stock_no, year, month):
@@ -23,38 +22,37 @@ def fetch_monthly(stock_no, year, month):
     return df[["Date", "Close"]]
 
 
-# 確保 CSV 檔案存在
+# 確保 CSV 存在（如果沒有就建立空檔）
 def ensure_csv_exists(ticker, data_dir="data"):
     os.makedirs(data_dir, exist_ok=True)
     file_path = Path(data_dir) / f"{ticker}.csv"
     if not file_path.exists():
-        df = pd.DataFrame(columns=["Date", "Close"])
-        df.to_csv(file_path, index=False, encoding="utf-8-sig")
-        print(f"{ticker}: 建立空檔案，避免 push 失敗")
+        pd.DataFrame(columns=["Date", "Close"]).to_csv(file_path, index=False, encoding="utf-8-sig")
+        print(f"{ticker}: 建立空檔案")
     return file_path
 
 
-# 主程式：只針對 1101.TW
+# 主程式：針對 1101.TW，逐月更新
 def main():
     ticker = "1101.TW"
     stock_no = "1101"
-    data_dir = "data"
-    file_path = ensure_csv_exists(ticker, data_dir)
+    file_path = ensure_csv_exists(ticker)
 
-    # 先抓 2025/04 ~ 2025/09 六個月的資料
-    frames = []
-    for month in range(4, 10):
-        df = fetch_monthly(stock_no, 2025, month)
-        if df is not None and not df.empty:
-            frames.append(df)
+    for month in range(4, 10):  # 2025/04 ~ 2025/09
+        df_new = fetch_monthly(stock_no, 2025, month)
+        if df_new is None or df_new.empty:
+            continue
 
-    if frames:
-        df_all = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["Date"])
+        # 讀取舊資料
+        df_old = pd.read_csv(file_path, parse_dates=["Date"]) if file_path.exists() else pd.DataFrame(columns=["Date", "Close"])
+
+        # 合併並去重
+        df_all = pd.concat([df_old, df_new], ignore_index=True).drop_duplicates(subset=["Date"])
         df_all = df_all.sort_values("Date")
+
+        # 覆蓋回存
         df_all.to_csv(file_path, index=False, encoding="utf-8-sig")
-        print(f"{ticker}: 更新完成，共 {len(df_all)} 筆")
-    else:
-        print(f"{ticker}: 沒有任何可用資料，保留空檔案")
+        print(f"{ticker}: {month} 月完成，累計 {len(df_all)} 筆")
 
 
 if __name__ == "__main__":
