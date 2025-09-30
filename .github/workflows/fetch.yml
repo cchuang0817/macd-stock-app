@@ -18,15 +18,16 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: |    
+        run: |
           pip install --upgrade pip
           pip install -r requirements.txt
-
-      - name: Run fetch_stock_data
-        run: python fetch_stock_data.py
+          pip install FinMind  # 確保 FinMind 一定被裝上
 
       - name: Ensure data folder exists
         run: mkdir -p data
+
+      - name: Run fetch_stock_data
+        run: python fetch_stock_data.py
 
       - name: Commit and push results
         run: |
