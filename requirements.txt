@@ -1,6 +1,5 @@
+finmind
 streamlit
 yfinance
 pandas
 requests
-finmind
-
