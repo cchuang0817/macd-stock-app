@@ -9,9 +9,9 @@ def load_tickers(file_path="company_info.csv"):
     df = pd.read_csv(file_path, encoding="utf-8-sig")
     return df["Ticker"].dropna().tolist()
 
-# 從 TWSE API 抓資料
-def fetch_twse(code, date):
-    url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={date}&stockNo={code}&response=json"
+# 從 TWSE API 抓某個月的資料
+def fetch_twse(code, date_str):
+    url = f"https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date={date_str}&stockNo={code}&response=json"
     resp = requests.get(url)
     data = resp.json()
 
@@ -30,16 +30,18 @@ def fetch_stock_data(ticker, data_dir="data"):
     code = ticker.split(".")[0]
 
     today = datetime.today()
-    start_date = today.replace(day=1) - timedelta(days=180)  # 6個月前
+    start_date = today.replace(day=1) - timedelta(days=180)  # 6 個月前的基準
 
     all_data = []
     d = start_date
     while d <= today:
-        date_str = d.strftime("%Y%m%d")
+        first_day = d.replace(day=1)  # 當月 1 號
+        date_str = first_day.strftime("%Y%m%d")
         df = fetch_twse(code, date_str)
         if not df.empty:
             all_data.append(df)
-        d += timedelta(days=31)  # 每次抓一個月
+        d += timedelta(days=32)  # 跳到下一個月
+
     if not all_data:
         print(f"{ticker}: 沒有抓到資料")
         return
