@@ -2,13 +2,15 @@ name: Fetch Stock Data
 
 on:
   schedule:
-    - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑（UTC+0 加8hr）
+    - cron: "0 1 * * 1-5"   # 每天台灣上午9點跑 (UTC+0 +8hr)
   workflow_dispatch:        # 手動觸發
+
+permissions:
+  contents: write   # 允許 GitHub Actions Bot 寫入 Repo
 
 jobs:
   fetch:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repo
         uses: actions/checkout@v3
@@ -28,11 +30,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-
-          if ls data/*.csv 1> /dev/null 2>&1; then
-            git add data/*.csv
-            git commit -m "Update stock data [skip ci]" || echo "No changes to commit"
-            git push
-          else
-            echo "No CSV files generated, skip commit"
-          fi
+          git add data/*.csv
+          git commit -m "Update stock data [skip ci]" || echo "No changes to commit"
+          git push
