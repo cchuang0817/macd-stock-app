@@ -4,58 +4,94 @@ import pandas as pd
 from datetime import datetime, timedelta
 from pathlib import Path
 
-def load_tickers(file_path="company_info.csv"):
-    df = pd.read_csv(file_path, encoding="utf-8-sig")
-    return df["Ticker"].dropna().tolist()
+# TWSE API: 一次只能抓一個月
+TWSE_API = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
 
-def fetch_twse(code, date_str):
-    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str}&stockNo={code}"
-    resp = requests.get(url)
+# TPEx API: 一次只能抓一個月
+TPEX_API = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
+
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def fetch_twse(stock_id, date):
+    """從 TWSE 抓取單月資料"""
+    params = {
+        "response": "json",
+        "date": date,
+        "stockNo": stock_id
+    }
+    resp = requests.get(TWSE_API, params=params)
     data = resp.json()
+
     if "data" not in data:
         return pd.DataFrame()
 
     df = pd.DataFrame(data["data"], columns=data["fields"])
-    df["Date"] = pd.to_datetime(df["日期"], format="%Y/%m/%d", errors="coerce")
-    df["Close"] = pd.to_numeric(df["收盤價"].str.replace(",", ""), errors="coerce")
+    df = df.rename(columns={"日期": "Date", "收盤價": "Close"})
+    df["Date"] = pd.to_datetime(df["Date"].str.replace("/", "-"), errors="coerce")
+    df["Close"] = pd.to_numeric(df["Close"].str.replace(",", ""), errors="coerce")
     return df[["Date", "Close"]].dropna()
 
-def fetch_stock_data(ticker, data_dir="data"):
-    os.makedirs(data_dir, exist_ok=True)
-    file_path = Path(data_dir) / f"{ticker}.csv"
-    code = ticker.split(".")[0]
 
+def fetch_tpex(stock_id, date):
+    """從 TPEx 抓取單月資料"""
+    params = {
+        "l": "zh-tw",
+        "d": f"{int(date[:4])-1911}/{date[4:6]}",  # 民國年/月
+        "stkno": stock_id
+    }
+    resp = requests.get(TPEX_API, params=params)
+    data = resp.json()
+
+    if "aaData" not in data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(data["aaData"])
+    df = df.rename(columns={0: "Date", 2: "Close"})
+    df["Date"] = pd.to_datetime(df["Date"].str.replace("/", "-"), errors="coerce")
+    df["Close"] = pd.to_numeric(df["Close"].str.replace(",", ""), errors="coerce")
+    return df[["Date", "Close"]].dropna()
+
+
+def fetch_stock_data(ticker):
+    """抓取 6 個月資料並存檔"""
+    file_path = Path(DATA_DIR) / f"{ticker}.csv"
+
+    # 判斷上市 / 上櫃
+    stock_id = ticker.replace(".TW", "").replace(".TWO", "")
+    is_twse = ticker.endswith(".TW")
+
+    # 最近六個月
     today = datetime.today()
-    start_date = today.replace(day=1) - timedelta(days=180)  # 6 個月前
-
-    all_data = []
-    d = start_date
-    while d <= today:
-        first_day = d.replace(day=1)
-        date_str = first_day.strftime("%Y%m%d")
-        df = fetch_twse(code, date_str)
+    dfs = []
+    for i in range(6):
+        month_date = (today - timedelta(days=i*30)).strftime("%Y%m01")  # 每月第一天
+        if is_twse:
+            df = fetch_twse(stock_id, month_date)
+        else:
+            df = fetch_tpex(stock_id, month_date)
         if not df.empty:
-            all_data.append(df)
-        d += timedelta(days=32)  # 下一個月
+            dfs.append(df)
 
-    if not all_data:
-        print(f"{ticker}: 沒有抓到資料")
-        return
+    if dfs:
+        df_all = pd.concat(dfs, ignore_index=True).drop_duplicates(subset=["Date"])
+        df_all = df_all.sort_values("Date")
+        df_all.to_csv(file_path, index=False)
+        print(f"{ticker} 下載完成，共 {len(df_all)} 筆")
+    else:
+        print(f"{ticker} 沒有抓到資料")
 
-    df_all = pd.concat(all_data, ignore_index=True)
-    df_all = df_all.drop_duplicates(subset=["Date"])
-    df_all = df_all.sort_values("Date")
-    df_all.to_csv(file_path, index=False)
-    print(f"{ticker} 更新完成，共 {len(df_all)} 筆")
 
 def main():
-    tickers = load_tickers("company_info.csv")
-    print(f"共 {len(tickers)} 檔股票，開始抓取/更新...")
+    tickers = pd.read_csv("company_info.csv")["Ticker"].dropna().tolist()
+    print(f"共 {len(tickers)} 檔股票，開始下載...")
+
     for ticker in tickers:
         try:
             fetch_stock_data(ticker)
         except Exception as e:
             print(f"{ticker} 失敗: {e}")
+
 
 if __name__ == "__main__":
     main()
