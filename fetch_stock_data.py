@@ -1,103 +1,74 @@
 import os
 import requests
 import pandas as pd
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
-DATA_DIR = "data"
-os.makedirs(DATA_DIR, exist_ok=True)
-
-
-# ===== 抓取 TWSE（上市）資料 =====
+# TWSE API
 def fetch_twse(stock_id, year, month):
-    url = "https://www.twse.com.tw/exchangeReport/STOCK_DAY"
-    params = {
-        "response": "json",
-        "date": f"{year}{month:02}01",
-        "stockNo": stock_id
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/123.0.0.0 Safari/537.36"
-    }
-
-    resp = requests.get(url, params=params, headers=headers, timeout=10)
-
-    try:
-        data = resp.json()
-    except Exception:
-        print(f"{stock_id}.TW 回傳非 JSON（可能被擋），URL: {resp.url}")
+    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={year}{month:02d}01&stockNo={stock_id}"
+    resp = requests.get(url)
+    data = resp.json()
+    if data.get("stat") != "OK":
         return pd.DataFrame()
-
-    if "data" not in data:
-        return pd.DataFrame()
-
     df = pd.DataFrame(data["data"], columns=data["fields"])
     df["Date"] = pd.to_datetime(df["日期"].str.replace("/", "-"), errors="coerce")
     df["Close"] = pd.to_numeric(df["收盤價"].str.replace(",", ""), errors="coerce")
     return df[["Date", "Close"]]
 
-
-# ===== 抓取 TPEx（上櫃）資料 =====
+# TPEx API
 def fetch_tpex(stock_id, year, month):
-    roc_year = year - 1911  # 民國年
-    url = "https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php"
-    params = {
-        "l": "zh-tw",
-        "d": f"{roc_year}/{month:02}",
-        "stkno": stock_id,
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                      "AppleWebKit/537.36 (KHTML, like Gecko) "
-                      "Chrome/123.0.0.0 Safari/537.36"
-    }
-
-    resp = requests.get(url, params=params, headers=headers, timeout=10)
-
-    try:
-        data = resp.json()
-    except Exception:
-        print(f"{stock_id}.TWO 回傳非 JSON（可能被擋），URL: {resp.url}")
+    url = f"https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&d={year}/{month:02d}&stkno={stock_id}"
+    resp = requests.get(url)
+    data = resp.json()
+    if not data.get("aaData"):
         return pd.DataFrame()
-
-    if "aaData" not in data:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(data["aaData"], columns=data["columns"])
-    df["Date"] = pd.to_datetime(df["日期"].str.replace("/", "-"), errors="coerce")
-    df["Close"] = pd.to_numeric(df["收盤"].str.replace(",", ""), errors="coerce")
+    df = pd.DataFrame(data["aaData"])
+    df["Date"] = pd.to_datetime(df[0].str.replace("/", "-"), errors="coerce")
+    df["Close"] = pd.to_numeric(df[6].str.replace(",", ""), errors="coerce")
     return df[["Date", "Close"]]
 
+# 存檔
+def save_to_csv(ticker, df, data_dir="data"):
+    os.makedirs(data_dir, exist_ok=True)
+    file_path = Path(data_dir) / f"{ticker}.csv"
 
-# ===== 主程式 =====
+    if file_path.exists():
+        old = pd.read_csv(file_path, parse_dates=["Date"])
+        merged = pd.concat([old, df]).drop_duplicates(subset=["Date"]).sort_values("Date")
+    else:
+        merged = df
+    merged.to_csv(file_path, index=False, encoding="utf-8-sig")
+    print(f"{ticker} 儲存 {len(merged)} 筆資料 (本次新增 {len(df)} 筆)")
+
+# 主程式
 def main():
-    company_df = pd.read_csv("company_info.csv", encoding="utf-8-sig")
+    # 測試用，後面你可以改成讀 company_info.csv
+    tickers = ["1101.TW", "5483.TWO"]
 
-    for _, row in company_df.iterrows():
-        ticker = row["Ticker"]
+    today = datetime.today()
+    year = today.year
+    months = [4, 5, 6, 7, 8, 9]  # 先固定測試 4~9 月
+
+    for ticker in tickers:
         stock_id = ticker.split(".")[0]
-        market = ticker.split(".")[1]  # TW / TWO
-        all_data = []
+        all_df = pd.DataFrame()
 
-        for month in range(4, 10):  # 先抓 2025/04 ~ 2025/09
-            if market == "TW":
-                df = fetch_twse(stock_id, 2025, month)
+        for m in months:
+            if ticker.endswith(".TW"):
+                df = fetch_twse(stock_id, year, m)
+            elif ticker.endswith(".TWO"):
+                df = fetch_tpex(stock_id, year, m)
             else:
-                df = fetch_tpex(stock_id, 2025, month)
+                continue
 
             if not df.empty:
-                all_data.append(df)
+                all_df = pd.concat([all_df, df])
 
-        if all_data:
-            df_all = pd.concat(all_data, ignore_index=True).drop_duplicates("Date")
-            file_path = Path(DATA_DIR) / f"{ticker}.csv"
-            df_all.to_csv(file_path, index=False, encoding="utf-8-sig")
-            print(f"{ticker} 儲存 {len(df_all)} 筆資料（總共 {len(all_data)} 個月）")
+        if not all_df.empty:
+            save_to_csv(ticker, all_df)
         else:
             print(f"{ticker} 沒有抓到資料")
-
 
 if __name__ == "__main__":
     main()
