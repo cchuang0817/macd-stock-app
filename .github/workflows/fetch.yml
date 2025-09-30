@@ -1,0 +1,33 @@
+name: Fetch Stock Data
+
+on:
+  schedule:
+    - cron: "0 21 * * *"   # 每天 UTC 21:00 (台灣時間早上 5 點)
+  workflow_dispatch:        # 手動觸發
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run fetch_stock_data.py
+        run: python fetch_stock_data.py
+
+      - name: Commit and push changes
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add data/*.csv
+          git commit -m "Update stock data" || echo "No changes to commit"
+          git push
