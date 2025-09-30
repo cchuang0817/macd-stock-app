@@ -1,54 +1,83 @@
 import os
 import requests
 import pandas as pd
+from datetime import datetime
 from pathlib import Path
 
-def fetch_twse_month(stock_no, year, month):
-    """抓取 TWSE 指定股票某一個月份的日成交資料"""
-    # 組合成 YYYYMM01
-    date = f"{year}{month:02d}01"
-    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date}&stockNo={stock_no}"
+DATA_DIR = "data"
+TICKER = "1101.TW"
+STOCK_NO = "1101"
 
+# 建立資料夾
+os.makedirs(DATA_DIR, exist_ok=True)
+
+def fetch_twse(stock_no: str, date: str) -> pd.DataFrame:
+    """抓取 TWSE 單月股價 (日收盤價)"""
+    url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date}&stockNo={stock_no}"
     resp = requests.get(url)
+    resp.raise_for_status()
     data = resp.json()
 
-    if data["stat"] != "OK":
-        print(f"{stock_no} 沒有抓到資料")
+    if data.get("stat") != "OK":
         return pd.DataFrame(columns=["Date", "Close"])
 
-    # TWSE 回傳的日期格式是 民國年/xx/xx，要轉換
-    rows = []
-    for item in data["data"]:
-        roc_date = item[0]  # 民國年格式
-        close = item[6]     # 收盤價
+    rows = data["data"]
+    df = pd.DataFrame(rows, columns=data["fields"])
+    df["Date"] = pd.to_datetime(df["日期"].str.replace("/", "-"), errors="coerce")
+    df["Close"] = pd.to_numeric(df["收盤價"].str.replace(",", ""), errors="coerce")
+    return df[["Date", "Close"]].dropna()
 
-        # 轉西元日期
-        y, m, d = roc_date.split("/")
-        y = int(y) + 1911
-        date_str = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+def initialize_stock(stock_no: str, ticker: str):
+    """初始化：抓取最近 6 個月資料"""
+    today = datetime.today()
+    year, month = today.year, today.month
+    months = []
+    for i in range(6):
+        m = month - i
+        y = year
+        if m <= 0:
+            m += 12
+            y -= 1
+        months.append(f"{y}{m:02d}01")
 
-        rows.append([date_str, float(close.replace(",", ""))])
+    all_data = []
+    for m in months[::-1]:  # 由舊到新
+        df = fetch_twse(stock_no, m)
+        if not df.empty:
+            all_data.append(df)
 
-    df = pd.DataFrame(rows, columns=["Date", "Close"])
-    return df
+    if all_data:
+        df_all = pd.concat(all_data, ignore_index=True)
+        file_path = Path(DATA_DIR) / f"{ticker}.csv"
+        df_all.to_csv(file_path, index=False)
+        print(f"{ticker} 初始化完成，共 {len(df_all)} 筆")
+    else:
+        print(f"{ticker} 初始化失敗，無資料")
 
+def update_stock(stock_no: str, ticker: str):
+    """每日更新：補上缺的日期"""
+    file_path = Path(DATA_DIR) / f"{ticker}.csv"
+    if not file_path.exists():
+        initialize_stock(stock_no, ticker)
+        return
+
+    df_old = pd.read_csv(file_path, parse_dates=["Date"])
+    last_date = df_old["Date"].max()
+    this_month = last_date.strftime("%Y%m01")
+
+    df_new = fetch_twse(stock_no, this_month)
+    if df_new.empty:
+        print(f"{ticker} 沒有抓到新資料")
+        return
+
+    df_all = pd.concat([df_old, df_new], ignore_index=True)
+    df_all.drop_duplicates(subset=["Date"], inplace=True)
+    df_all.sort_values("Date", inplace=True)
+    df_all.to_csv(file_path, index=False)
+    print(f"{ticker} 更新完成，共 {len(df_all)} 筆")
 
 def main():
-    os.makedirs("data", exist_ok=True)
-    df_company = pd.read_csv("company_info.csv", encoding="utf-8-sig")
-
-    year, month = 2025, 9  # 固定抓 2025 年 9 月
-    for ticker in df_company["Ticker"].head(5):  # 測試先抓前 5 檔
-        stock_no = ticker.replace(".TW", "").replace(".TWO", "")
-        df = fetch_twse_month(stock_no, year, month)
-
-        if not df.empty:
-            path = Path("data") / f"{ticker}.csv"
-            df.to_csv(path, index=False)
-            print(f"{ticker} 共 {len(df)} 筆，已存到 {path}")
-        else:
-            print(f"{ticker} 無資料")
-
+    update_stock(STOCK_NO, TICKER)
 
 if __name__ == "__main__":
     main()
