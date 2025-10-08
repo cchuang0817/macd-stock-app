@@ -3,6 +3,19 @@ import pandas as pd
 import os, time, random
 from datetime import datetime
 
+print("=== Step 1: 測試 yfinance 是否可抓資料 ===")
+import yfinance as yf
+
+try:
+    df_test = yf.Ticker("2330.TW").history(period="1mo")
+    print(f"2330.TW 測試資料筆數：{len(df_test)}")
+    if not df_test.empty:
+        print(df_test.tail(3))
+    else:
+        print("⚠️ yfinance 成功執行，但沒有回傳資料（DataFrame 為空）")
+except Exception as e:
+    print(f"❌ 測試失敗，錯誤訊息：{e}")
+
 # === 基本設定 ===
 CACHE_DIR = "data/cache"
 OUTPUT_DIR = "data"
