@@ -21,7 +21,7 @@ print(f"  OUTPUT_DIR = {OUTPUT_DIR}")
 print(f"  LOG_DIR = {LOG_DIR}")
 
 # === 測試股票清單讀取 ===
-tickers_file = os.path.join(BASE_DIR, "tickers_test.txt")
+tickers_file = os.path.join(BASE_DIR, "tickers_tw.txt")
 
 if not os.path.exists(tickers_file):
     print(f"❌ 找不到測試清單檔案：{tickers_file}")
