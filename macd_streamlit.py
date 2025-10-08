@@ -12,7 +12,7 @@ st.set_page_config(page_title="MACD 指標監控", layout="wide")
 st.title("📊 MACD 選股結果瀏覽器")
 
 # === 載入公司對照表 ===
-company_file = os.path.join(DATA_DIR, "company_info.csv")
+company_file = os.path.join(BASE_DIR, "company_info.csv")
 if not os.path.exists(company_file):
     st.error("找不到 company_info.csv，請確認放在 data 資料夾中。")
     st.stop()
