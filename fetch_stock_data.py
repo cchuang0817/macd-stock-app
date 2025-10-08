@@ -39,7 +39,7 @@ print(f"載入股票數量：{len(tickers)}")
 print("股票清單：", ", ".join(tickers))
 
 
-# === MACD 計算函式（修正版） ===
+# === MACD 計算函式（理論算法） ===
 def calc_macd(df, fast=12, slow=26, signal=9):
     df = df.copy()
     df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False, min_periods=fast).mean()
@@ -65,10 +65,12 @@ def check_macd_main(df):
     recent_neg = neg_hist.tail(5)
     if (recent_neg["MACD"] < 0).any() or (recent_neg["Signal"] < 0).any():
         return False
-    # 4️⃣ 綠柱絕對值連續三天收斂，且最後一根在 -1~0 之間
+    # 4️⃣ 連續三天為綠柱且收斂，且最後一根在 -1~0 之間
     if len(df) < 3:
         return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
+    if not (h1 < 0 and h2 < 0 and h3 < 0):  # 三天都是綠柱
+        return False
     if not (abs(h1) > abs(h2) > abs(h3) and -1 <= h3 < 0):
         return False
     return True
@@ -89,10 +91,12 @@ def check_macd_watchlist(df):
     recent_neg = neg_hist.tail(5)
     if (recent_neg["MACD"] < -1).any() or (recent_neg["Signal"] < -1).any():
         return False
-    # 4️⃣ 綠柱絕對值連續三天收斂，且最後一根在 -3~0 之間（放寬）
+    # 4️⃣ 連續三天為綠柱且收斂，且最後一根在 -3~0 之間（放寬）
     if len(df) < 3:
         return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
+    if not (h1 < 0 and h2 < 0 and h3 < 0):  # 三天都是綠柱
+        return False
     if not (abs(h1) > abs(h2) > abs(h3) and -3 <= h3 < 0):
         return False
     return True
