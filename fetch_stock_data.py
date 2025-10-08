@@ -4,15 +4,19 @@ import os, time, random
 from datetime import datetime
 
 # === 基本設定 ===
-CACHE_DIR = "data/cache"
-OUTPUT_DIR = "data"
-LOG_DIR = "data/logs"
-
-print(f"當前執行路徑: {os.getcwd()}")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(BASE_DIR, "data", "cache")
+OUTPUT_DIR = os.path.join(BASE_DIR, "data")
+LOG_DIR = os.path.join(BASE_DIR, "data", "logs")
 
 os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
+
+print(f"建立資料夾:")
+print(f"  CACHE_DIR = {CACHE_DIR}")
+print(f"  OUTPUT_DIR = {OUTPUT_DIR}")
+print(f"  LOG_DIR = {LOG_DIR}")
 
 # === 讀取股票清單與公司資訊 ===
 tickers = [
