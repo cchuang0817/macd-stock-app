@@ -60,3 +60,11 @@ def fetch_stock_data(tk):
                 df = df_cache
         else:
             df = yf.Ticker(tk).history(period="6mo", interval="1d")
+            
+        if df is not None and not df.empty:
+            df.to_csv(cache_path)
+        return df
+
+    except Exception as e:   # ✅ 補上這一段
+        print(f"⚠️ {tk} 抓取失敗: {e}")
+        return None
