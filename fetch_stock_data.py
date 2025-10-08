@@ -4,14 +4,12 @@ import pandas as pd
 import os
 from datetime import datetime
 
-# === 讀取股票清單與公司資訊 ===
 tickers = [
     t.strip() for t in open("tickers_tw.txt", encoding="utf-8").read().splitlines()
     if t.strip() and not t.startswith("#")
 ]
 company_info = pd.read_csv("company_info.csv")
 
-# === MACD 計算 ===
 def calc_macd(df, fast=12, slow=26, signal=9):
     df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False).mean()
     df["EMA_slow"] = df["Close"].ewm(span=slow, adjust=False).mean()
@@ -20,21 +18,16 @@ def calc_macd(df, fast=12, slow=26, signal=9):
     df["Hist"] = df["MACD"] - df["Signal"]
     return df.dropna()
 
-# === MACD 條件檢查 ===
 def check_macd_condition(df):
-    # Step1: 六個月內曾穿越0軸
     if not ((df["MACD"] > 0).any() and (df["MACD"] < 0).any()):
         return False
-    # Step2: 當前為綠柱
     last = df.iloc[-1]
     if last["Hist"] >= 0:
         return False
-    # Step3: 綠柱期間 MACD & Signal > 0
     neg_hist = df[df["Hist"] < 0]
     recent_neg = neg_hist.tail(5)
     if (recent_neg["MACD"] < 0).any() or (recent_neg["Signal"] < 0).any():
         return False
-    # Step4: 綠柱連續三天收斂且 Hist < -1
     if len(df) < 3:
         return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
@@ -42,7 +35,6 @@ def check_macd_condition(df):
         return False
     return True
 
-# === 主流程 ===
 def main():
     results = []
     for tk in tickers:
@@ -66,21 +58,30 @@ def main():
                     "Signal": round(last["Signal"], 2),
                     "Hist": round(last["Hist"], 2)
                 })
-                print(f"✅ {tk} 符合條件")
-            else:
-                print(f"❌ {tk} 不符合條件")
         except Exception as e:
             print(f"{tk} error: {e}")
 
-    df_out = pd.DataFrame(results)
     os.makedirs("data", exist_ok=True)
     date_str = datetime.now().strftime("%Y-%m-%d")
     file_path = f"data/macd_filtered_{date_str}.csv"
-    df_out.to_csv(file_path, index=False, encoding="utf-8-sig")
 
-    print("\n=== 篩選完成 ===")
-    print(df_out)
-    print(f"\n共找到 {len(df_out)} 檔股票，結果已輸出至 {file_path}")
+    # === 若無資料，也輸出 N/A 一列 ===
+    if len(results) == 0:
+        print("\n⚠️ 沒有任何股票符合 MACD 條件，輸出空白表格。")
+        df_out = pd.DataFrame([{
+            "Ticker": "N/A",
+            "Name": "N/A",
+            "Industry": "N/A",
+            "LastDate": "N/A",
+            "MACD": "N/A",
+            "Signal": "N/A",
+            "Hist": "N/A"
+        }])
+    else:
+        df_out = pd.DataFrame(results)
+
+    df_out.to_csv(file_path, index=False, encoding="utf-8-sig")
+    print(f"\n共找到 {len(results)} 檔股票，結果已輸出至 {file_path}")
 
 if __name__ == "__main__":
     main()
