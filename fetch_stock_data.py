@@ -39,18 +39,20 @@ print(f"載入股票數量：{len(tickers)}")
 print("股票清單：", ", ".join(tickers))
 
 
-# === MACD 計算函式 ===
+# === MACD 計算函式（修正版） ===
 def calc_macd(df, fast=12, slow=26, signal=9):
-    df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False).mean()
-    df["EMA_slow"] = df["Close"].ewm(span=slow, adjust=False).mean()
+    df = df.copy()
+    df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False, min_periods=fast).mean()
+    df["EMA_slow"] = df["Close"].ewm(span=slow, adjust=False, min_periods=slow).mean()
     df["MACD"] = df["EMA_fast"] - df["EMA_slow"]
-    df["Signal"] = df["MACD"].ewm(span=signal, adjust=False).mean()
+    df["Signal"] = df["MACD"].ewm(span=signal, adjust=False, min_periods=signal).mean()
     df["Hist"] = df["MACD"] - df["Signal"]
     return df.dropna()
 
 
 # === 主策略（嚴格條件） ===
 def check_macd_main(df):
+    df = df.sort_index(ascending=True).copy()
     # 1️⃣ 六個月內 MACD 曾穿越 0 軸
     if not ((df["MACD"] > 0).any() and (df["MACD"] < 0).any()):
         return False
@@ -63,17 +65,18 @@ def check_macd_main(df):
     recent_neg = neg_hist.tail(5)
     if (recent_neg["MACD"] < 0).any() or (recent_neg["Signal"] < 0).any():
         return False
-    # 4️⃣ 綠柱連續三天收斂，且最後一根在 -1~0 之間
+    # 4️⃣ 綠柱絕對值連續三天收斂，且最後一根在 -1~0 之間
     if len(df) < 3:
         return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
-    if not (h1 < h2 < h3 and -1 <= h3 < 0):
+    if not (abs(h1) > abs(h2) > abs(h3) and -1 <= h3 < 0):
         return False
     return True
 
 
 # === 觀察池（放寬條件） ===
 def check_macd_watchlist(df):
+    df = df.sort_index(ascending=True).copy()
     # 1️⃣ 六個月內 MACD 曾穿越 0 軸
     if not ((df["MACD"] > 0).any() and (df["MACD"] < 0).any()):
         return False
@@ -86,11 +89,11 @@ def check_macd_watchlist(df):
     recent_neg = neg_hist.tail(5)
     if (recent_neg["MACD"] < -1).any() or (recent_neg["Signal"] < -1).any():
         return False
-    # 4️⃣ 綠柱連續三天收斂，且最後一根在 -3~0 之間（放寬）
+    # 4️⃣ 綠柱絕對值連續三天收斂，且最後一根在 -3~0 之間（放寬）
     if len(df) < 3:
         return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
-    if not (h1 < h2 < h3 and -3 <= h3 < 0):
+    if not (abs(h1) > abs(h2) > abs(h3) and -3 <= h3 < 0):
         return False
     return True
 
