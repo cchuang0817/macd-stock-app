@@ -13,28 +13,11 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
-# === 寫檔測試，確認有寫入權限 ===
-test_file_path = os.path.join(OUTPUT_DIR, "test_write.txt")
-with open(test_file_path, "w", encoding="utf-8") as f:
-    f.write("✅ 寫入測試成功\n")
-print(f"測試檔案已寫入：{test_file_path}")
-
-print(f"建立資料夾:")
-print(f"  CACHE_DIR = {CACHE_DIR}")
-print(f"  OUTPUT_DIR = {OUTPUT_DIR}")
-print(f"  LOG_DIR = {LOG_DIR}")
-
 # === 讀取股票清單與公司資訊 ===
 tickers = [
-    t.strip() for t in open("tickers_tw.txt", encoding="utf-8").read().splitlines()
+    t.strip() for t in open("tickers_test.txt", encoding="utf-8").read().splitlines()
     if t.strip() and not t.startswith("#")
 ]
-
-print(f"目前執行位置: {os.getcwd()}")
-print(f"是否存在 tickers_tw.txt: {os.path.exists('tickers_tw.txt')}")
-print(f"是否存在 company_info.csv: {os.path.exists('company_info.csv')}")
-print(f"讀入的股票數量: {len(tickers)}")
-
 company_info = pd.read_csv("company_info.csv")
 
 # === MACD 計算 ===
