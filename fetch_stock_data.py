@@ -13,6 +13,12 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
+# === 寫檔測試，確認有寫入權限 ===
+test_file_path = os.path.join(OUTPUT_DIR, "test_write.txt")
+with open(test_file_path, "w", encoding="utf-8") as f:
+    f.write("✅ 寫入測試成功\n")
+print(f"測試檔案已寫入：{test_file_path}")
+
 print(f"建立資料夾:")
 print(f"  CACHE_DIR = {CACHE_DIR}")
 print(f"  OUTPUT_DIR = {OUTPUT_DIR}")
