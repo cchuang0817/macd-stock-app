@@ -1,6 +1,8 @@
 # fetch_stock_data.py
 import yfinance as yf
 import pandas as pd
+import os
+from datetime import datetime
 
 # === 讀取股票清單與公司資訊 ===
 tickers = [
@@ -23,25 +25,21 @@ def check_macd_condition(df):
     # Step1: 六個月內曾穿越0軸
     if not ((df["MACD"] > 0).any() and (df["MACD"] < 0).any()):
         return False
-
     # Step2: 當前為綠柱
     last = df.iloc[-1]
     if last["Hist"] >= 0:
         return False
-
     # Step3: 綠柱期間 MACD & Signal > 0
     neg_hist = df[df["Hist"] < 0]
     recent_neg = neg_hist.tail(5)
     if (recent_neg["MACD"] < 0).any() or (recent_neg["Signal"] < 0).any():
         return False
-
     # Step4: 綠柱連續三天收斂且 Hist < -1
     if len(df) < 3:
         return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
     if not (h1 < h2 < h3 and h3 < -1):
         return False
-
     return True
 
 # === 主流程 ===
@@ -75,10 +73,14 @@ def main():
             print(f"{tk} error: {e}")
 
     df_out = pd.DataFrame(results)
-    df_out.to_csv("macd_filtered.csv", index=False, encoding="utf-8-sig")
+    os.makedirs("data", exist_ok=True)
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    file_path = f"data/macd_filtered_{date_str}.csv"
+    df_out.to_csv(file_path, index=False, encoding="utf-8-sig")
+
     print("\n=== 篩選完成 ===")
     print(df_out)
-    print(f"\n共找到 {len(df_out)} 檔股票，結果已輸出至 macd_filtered.csv")
+    print(f"\n共找到 {len(df_out)} 檔股票，結果已輸出至 {file_path}")
 
 if __name__ == "__main__":
     main()
