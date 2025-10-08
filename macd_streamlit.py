@@ -1,47 +1,79 @@
-# macd_streamlit.py
 import streamlit as st
 import pandas as pd
 import os
-import subprocess
+from datetime import datetime
 
-st.set_page_config(page_title="MACD 股票追蹤系統", layout="wide")
+# === 路徑設定 ===
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 
-st.title("📈 MACD 股票追蹤系統")
+st.set_page_config(page_title="MACD 指標監控", layout="wide")
 
-DATA_FOLDER = "data"
+st.title("📊 MACD 選股結果瀏覽器")
 
-# === 按鈕：重新分析 ===
-if st.button("🔄 重新執行 MACD 分析"):
-    with st.spinner("正在從 Yahoo Finance 抓取股價並計算 MACD，請稍候..."):
-        result = subprocess.run(["python", "fetch_stock_data.py"], capture_output=True, text=True)
-        st.text(result.stdout)
+# === 載入公司對照表 ===
+company_file = os.path.join(DATA_DIR, "company_info.csv")
+if not os.path.exists(company_file):
+    st.error("找不到 company_info.csv，請確認放在 data 資料夾中。")
+    st.stop()
 
-# === 掃描歷史檔案 ===
-if not os.path.exists(DATA_FOLDER):
-    os.makedirs(DATA_FOLDER)
+df_company = pd.read_csv(company_file)
 
+# === 搜尋可用日期 ===
 files = sorted(
-    [f for f in os.listdir(DATA_FOLDER) if f.startswith("macd_filtered_") and f.endswith(".csv")],
+    [f for f in os.listdir(DATA_DIR) if f.startswith("macd_main_") and f.endswith(".csv")],
     reverse=True
 )
-
 if not files:
-    st.info("目前尚無任何分析結果，請先執行上方的『重新分析』。")
-else:
-    # 讓使用者選擇日期
-    file_dates = [f.replace("macd_filtered_", "").replace(".csv", "") for f in files]
-    selected_date = st.selectbox("📅 選擇要檢視的分析日期：", file_dates)
+    st.warning("目前 data 資料夾中找不到任何 MACD 結果檔案。")
+    st.stop()
 
-    # 顯示選擇的檔案內容
-    selected_file = os.path.join(DATA_FOLDER, f"macd_filtered_{selected_date}.csv")
-    df = pd.read_csv(selected_file)
+# 取出日期清單
+dates = [f.replace("macd_main_", "").replace(".csv", "") for f in files]
+selected_date = st.selectbox("📅 選擇日期", dates)
 
-    st.subheader(f"📊 分析結果：{selected_date}")
-    if df.empty:
-        st.warning("該日期沒有符合條件的股票。")
-    else:
-        st.success(f"共找到 {len(df)} 檔股票符合條件。")
-        st.dataframe(df, use_container_width=True)
+# === 讀取主策略與觀察池 ===
+main_file = os.path.join(DATA_DIR, f"macd_main_{selected_date}.csv")
+watch_file = os.path.join(DATA_DIR, f"macd_watchlist_{selected_date}.csv")
+
+df_main = pd.read_csv(main_file)
+df_watch = pd.read_csv(watch_file)
+
+# === 比對公司中文名稱與產業 ===
+def merge_company_info(df):
+    if df.empty or "Ticker" not in df.columns:
+        return df
+    df = pd.merge(df, df_company, on="Ticker", how="left")
+    # 排序欄位順序（中文名稱、產業、MACD、Signal、Hist）
+    cols = ["Ticker", "Name", "Industry", "MACD", "Signal", "Hist", "LastDate"]
+    return df[[c for c in cols if c in df.columns]]
+
+df_main_merged = merge_company_info(df_main)
+df_watch_merged = merge_company_info(df_watch)
+
+# === 顯示統計摘要 ===
+col1, col2 = st.columns(2)
+with col1:
+    st.metric("主策略符合數", len(df_main_merged))
+with col2:
+    st.metric("觀察池符合數", len(df_watch_merged))
 
 st.markdown("---")
-st.caption("© 2025 MACD Stock App — Powered by yfinance & Streamlit")
+
+# === 顯示主策略表格 ===
+st.subheader("✅ 主策略（高勝率篩選）")
+if df_main_merged.empty or df_main_merged["Ticker"].iloc[0] == "N/A":
+    st.info("目前沒有符合主策略條件的股票。")
+else:
+    st.dataframe(df_main_merged, use_container_width=True)
+
+# === 顯示觀察池表格 ===
+st.subheader("👀 觀察池（潛在轉折候選）")
+if df_watch_merged.empty or df_watch_merged["Ticker"].iloc[0] == "N/A":
+    st.info("目前沒有符合觀察池條件的股票。")
+else:
+    st.dataframe(df_watch_merged, use_container_width=True)
+
+# === 顯示來源說明 ===
+st.markdown("---")
+st.caption(f"資料來源：Yahoo Finance，自動生成日期：{selected_date}")
