@@ -16,6 +16,12 @@ tickers = [
     t.strip() for t in open("tickers_tw.txt", encoding="utf-8").read().splitlines()
     if t.strip() and not t.startswith("#")
 ]
+
+print(f"目前執行位置: {os.getcwd()}")
+print(f"是否存在 tickers_tw.txt: {os.path.exists('tickers_tw.txt')}")
+print(f"是否存在 company_info.csv: {os.path.exists('company_info.csv')}")
+print(f"讀入的股票數量: {len(tickers)}")
+
 company_info = pd.read_csv("company_info.csv")
 
 # === MACD 計算 ===
