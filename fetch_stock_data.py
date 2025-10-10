@@ -27,7 +27,6 @@ with open(tickers_file, "r", encoding="utf-8") as f:
 
 print(f"✅ 已載入股票清單：{len(tickers)} 檔\n")
 
-
 # === Cache 機制 ===
 def load_data_with_cache(ticker, period="6mo", interval="1d", cache_hours=24):
     cache_file = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
@@ -42,8 +41,7 @@ def load_data_with_cache(ticker, period="6mo", interval="1d", cache_hours=24):
         print(f"  ↳ 已更新快取: {os.path.basename(cache_file)}")
     return df
 
-
-# === 技術指標函式 ===
+# === 技術指標 ===
 def calc_macd(df, fast=12, slow=26, signal=9):
     df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False).mean()
     df["EMA_slow"] = df["Close"].ewm(span=slow, adjust=False).mean()
@@ -68,8 +66,7 @@ def calc_atr(df, period=14):
     df["ATR"] = df["TR"].rolling(period).mean()
     return df
 
-
-# === 回測模組（僅主策略使用） ===
+# === 回測模組 (簡易版) ===
 def simple_backtest(df):
     balance, position = 100000, 0
     for i in range(1, len(df)):
@@ -84,8 +81,7 @@ def simple_backtest(df):
     roi = (final_value / 100000 - 1) * 100
     return round(roi, 2)
 
-
-# === 主策略條件 ===
+# === 放寬條件的主策略 (v2.1) ===
 def check_macd_main(df, df_week, info):
     df = df.sort_index(ascending=True).copy()
 
@@ -98,20 +94,23 @@ def check_macd_main(df, df_week, info):
     if last["Hist"] >= 0 or last["MACD"] < 0 or last["Signal"] < 0:
         return False
 
-    # 3️⃣ 三天綠柱收斂
-    if len(df) < 3: return False
+    # 3️⃣ 三天綠柱收斂（放寬 -2）
+    if len(df) < 3:
+        return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
-    if not (h1 < 0 and h2 < 0 and h3 < 0): return False
-    if not (abs(h1) > abs(h2) > abs(h3) and -1 <= h3 < 0): return False
+    if not (h1 < 0 and h2 < 0 and h3 < 0):
+        return False
+    if not (abs(h1) > abs(h2) > abs(h3) and -2 <= h3 < 0):
+        return False
 
     # 4️⃣ 週線多頭共振
     if df_week["MACD"].iloc[-1] <= 0 or df_week["Signal"].iloc[-1] <= 0:
         return False
 
-    # 5️⃣ 成交量萎縮（3MA < 20MA）
+    # 5️⃣ 成交量萎縮（允許短期略高）
     df["Vol_MA3"] = df["Volume"].rolling(3).mean()
     df["Vol_MA20"] = df["Volume"].rolling(20).mean()
-    if df["Vol_MA3"].iloc[-1] > df["Vol_MA20"].iloc[-1]:
+    if df["Vol_MA3"].iloc[-1] > df["Vol_MA20"].iloc[-1] * 1.1:
         return False
 
     # 6️⃣ 收盤價在季線之上
@@ -123,23 +122,14 @@ def check_macd_main(df, df_week, info):
     if df["RSI"].iloc[-1] > 70:
         return False
 
-    # 8️⃣ 牛市背離
-    recent = df.tail(40)
-    low1 = recent["Close"].iloc[-20:-10].min()
-    low2 = recent["Close"].iloc[-10:].min()
-    macd_low1 = recent.loc[recent["Close"].iloc[-20:-10].idxmin(), "MACD"]
-    macd_low2 = recent.loc[recent["Close"].iloc[-10:].idxmin(), "MACD"]
-    if not (low2 < low1 and macd_low2 > macd_low1):
+    # 8️⃣ （已刪除牛市背離條件）
+
+    # 9️⃣ 放寬基本面條件：僅要求營收成長 > 0
+    growth = info.get("revenueGrowth", 0) or 0
+    if growth < 0:
         return False
 
-    # 9️⃣ 基本面：PE 與營收成長
-    pe = info.get("trailingPE", 0) or 0
-    growth = info.get("revenueGrowth", 0) or 0
-    if pe <= 0 or pe > 30: return False
-    if growth < 0: return False
-
     return True
-
 
 # === 主流程 ===
 def main():
@@ -165,12 +155,12 @@ def main():
             df_week = calc_macd(df_week)
             info = yf.Ticker(tk).info or {}
 
-            if df.empty: continue
+            if df.empty:
+                continue
 
             # === 主策略判斷 ===
             if check_macd_main(df, df_week, info):
                 last = df.iloc[-1]
-                pe = info.get("trailingPE", "N/A")
                 growth = info.get("revenueGrowth", "N/A")
                 atr = round(last["ATR"], 2)
                 stop_loss = round(last["Close"] - 2 * atr, 2)
@@ -184,12 +174,11 @@ def main():
                     "ATR": atr,
                     "StopLoss": stop_loss,
                     "TakeProfit": take_profit,
-                    "PE": pe,
                     "RevenueGrowth": growth
                 })
                 print(f"  ✅ {tk} 符合主策略")
 
-                # === 僅主策略股票回測 ===
+                # 回測
                 df_all = load_data_with_cache(tk, period="2y", interval="1d")
                 if not df_all.empty:
                     df_all = calc_macd(df_all)
@@ -214,11 +203,12 @@ def main():
     pd.DataFrame(main_results or [{"Ticker": "N/A"}]).to_csv(out_main, index=False, encoding="utf-8-sig")
     pd.DataFrame(backtest_results or [{"Ticker": "N/A"}]).to_csv(out_backtest, index=False, encoding="utf-8-sig")
 
-    # === Log Summary ===
     avg_roi = round(np.mean([b["ROI(%)"] for b in backtest_results]) if backtest_results else 0, 2)
     duration = round((time.time() - start_time) / 60, 2)
+
     summary = f"""
-=== MACD Pro v2 任務完成 {date_str} ===
+=== MACD Pro v2.1 (Relaxed Conditions) ===
+完成時間: {date_str}
 總股票數: {len(tickers)}
 成功處理: {len(tickers) - len(failed)}
 符合主策略: {len(main_results)}
