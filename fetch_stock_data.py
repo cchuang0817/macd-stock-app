@@ -3,6 +3,7 @@ import time
 import random
 from datetime import datetime
 import pandas as pd
+import numpy as np
 import yfinance as yf
 
 # === 基本路徑設定 ===
@@ -15,14 +16,8 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
-print(f"建立資料夾：")
-print(f"  CACHE_DIR = {CACHE_DIR}")
-print(f"  OUTPUT_DIR = {OUTPUT_DIR}")
-print(f"  LOG_DIR = {LOG_DIR}")
-
 # === 股票清單讀取 ===
 tickers_file = os.path.join(BASE_DIR, "tickers_tw.txt")
-
 if not os.path.exists(tickers_file):
     print(f"❌ 找不到股票清單檔案：{tickers_file}")
     exit(1)
@@ -30,182 +25,188 @@ if not os.path.exists(tickers_file):
 with open(tickers_file, "r", encoding="utf-8") as f:
     tickers = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
-if len(tickers) == 0:
-    print(f"⚠️ 股票清單為空，請確認 {tickers_file} 內容")
-    exit(1)
+print(f"✅ 已載入股票清單：{len(tickers)} 檔\n")
 
-print(f"已讀取清單：{tickers_file}")
-print(f"載入股票數量：{len(tickers)}")
-print("股票清單：", ", ".join(tickers))
-
-
-# === MACD 計算函式（理論算法） ===
+# === 技術指標函式 ===
 def calc_macd(df, fast=12, slow=26, signal=9):
-    df = df.copy()
-    df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False, min_periods=fast).mean()
-    df["EMA_slow"] = df["Close"].ewm(span=slow, adjust=False, min_periods=slow).mean()
+    df["EMA_fast"] = df["Close"].ewm(span=fast, adjust=False).mean()
+    df["EMA_slow"] = df["Close"].ewm(span=slow, adjust=False).mean()
     df["MACD"] = df["EMA_fast"] - df["EMA_slow"]
-    df["Signal"] = df["MACD"].ewm(span=signal, adjust=False, min_periods=signal).mean()
+    df["Signal"] = df["MACD"].ewm(span=signal, adjust=False).mean()
     df["Hist"] = df["MACD"] - df["Signal"]
-    return df.dropna()
+    return df
 
+def calc_rsi(df, period=14):
+    delta = df["Close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    rs = gain / loss
+    df["RSI"] = 100 - (100 / (1 + rs))
+    return df
 
-# === 主策略（嚴格條件） ===
-def check_macd_main(df):
+def calc_atr(df, period=14):
+    df["H-L"] = df["High"] - df["Low"]
+    df["H-PC"] = abs(df["High"] - df["Close"].shift(1))
+    df["L-PC"] = abs(df["Low"] - df["Close"].shift(1))
+    df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
+    df["ATR"] = df["TR"].rolling(period).mean()
+    return df
+
+# === 回測模組 ===
+def simple_backtest(df):
+    balance, position = 100000, 0
+    for i in range(1, len(df)):
+        prev, curr = df.iloc[i - 1], df.iloc[i]
+        if prev["MACD"] < prev["Signal"] and curr["MACD"] > curr["Signal"] and balance > 0:
+            position = balance / curr["Close"]
+            balance = 0
+        elif prev["MACD"] > prev["Signal"] and curr["MACD"] < curr["Signal"] and position > 0:
+            balance = position * curr["Close"]
+            position = 0
+    final_value = balance + (position * df["Close"].iloc[-1])
+    roi = (final_value / 100000 - 1) * 100
+    return round(roi, 2)
+
+# === 主策略判斷 ===
+def check_macd_main(df, df_week, info):
     df = df.sort_index(ascending=True).copy()
+
     # 1️⃣ 六個月內 MACD 曾穿越 0 軸
     if not ((df["MACD"] > 0).any() and (df["MACD"] < 0).any()):
         return False
-    # 2️⃣ 當前為綠柱
+
+    # 2️⃣ 當前為綠柱、MACD未破0
     last = df.iloc[-1]
-    if last["Hist"] >= 0:
+    if last["Hist"] >= 0 or last["MACD"] < 0 or last["Signal"] < 0:
         return False
-    # 3️⃣ 綠柱期間 MACD 與 Signal 不低於 0
-    neg_hist = df[df["Hist"] < 0]
-    recent_neg = neg_hist.tail(5)
-    if (recent_neg["MACD"] < 0).any() or (recent_neg["Signal"] < 0).any():
-        return False
-    # 4️⃣ 連續三天為綠柱且收斂，且最後一根在 -1~0 之間
-    if len(df) < 3:
-        return False
+
+    # 3️⃣ 三天綠柱收斂
+    if len(df) < 3: return False
     h1, h2, h3 = df["Hist"].iloc[-3:]
-    if not (h1 < 0 and h2 < 0 and h3 < 0):  # 三天都是綠柱
+    if not (h1 < 0 and h2 < 0 and h3 < 0): return False
+    if not (abs(h1) > abs(h2) > abs(h3) and -1 <= h3 < 0): return False
+
+    # 4️⃣ 週線多頭共振
+    if df_week["MACD"].iloc[-1] <= 0 or df_week["Signal"].iloc[-1] <= 0:
         return False
-    if not (abs(h1) > abs(h2) > abs(h3) and -1 <= h3 < 0):
+
+    # 5️⃣ 成交量萎縮（3MA < 20MA）
+    df["Vol_MA3"] = df["Volume"].rolling(3).mean()
+    df["Vol_MA20"] = df["Volume"].rolling(20).mean()
+    if df["Vol_MA3"].iloc[-1] > df["Vol_MA20"].iloc[-1]:
         return False
+
+    # 6️⃣ 收盤價在季線之上
+    df["MA60"] = df["Close"].rolling(60).mean()
+    if df["Close"].iloc[-1] < df["MA60"].iloc[-1]:
+        return False
+
+    # 7️⃣ RSI 不過熱
+    if df["RSI"].iloc[-1] > 70:
+        return False
+
+    # 8️⃣ 牛市背離
+    recent = df.tail(40)
+    low1 = recent["Close"].iloc[-20:-10].min()
+    low2 = recent["Close"].iloc[-10:].min()
+    macd_low1 = recent.loc[recent["Close"].iloc[-20:-10].idxmin(), "MACD"]
+    macd_low2 = recent.loc[recent["Close"].iloc[-10:].idxmin(), "MACD"]
+    if not (low2 < low1 and macd_low2 > macd_low1):
+        return False
+
+    # 9️⃣ 基本面：PE 與營收成長
+    pe = info.get("trailingPE", 0) or 0
+    growth = info.get("revenueGrowth", 0) or 0
+    if pe <= 0 or pe > 30: return False
+    if growth < 0: return False
+
     return True
-
-
-# === 觀察池（放寬條件） ===
-def check_macd_watchlist(df):
-    df = df.sort_index(ascending=True).copy()
-    # 1️⃣ 六個月內 MACD 曾穿越 0 軸
-    if not ((df["MACD"] > 0).any() and (df["MACD"] < 0).any()):
-        return False
-    # 2️⃣ 當前為綠柱
-    last = df.iloc[-1]
-    if last["Hist"] >= 0:
-        return False
-    # 3️⃣ MACD 與 Signal 不低於 -1（放寬）
-    neg_hist = df[df["Hist"] < 0]
-    recent_neg = neg_hist.tail(5)
-    if (recent_neg["MACD"] < -1).any() or (recent_neg["Signal"] < -1).any():
-        return False
-    # 4️⃣ 連續三天為綠柱且收斂，且最後一根在 -3~0 之間（放寬）
-    if len(df) < 3:
-        return False
-    h1, h2, h3 = df["Hist"].iloc[-3:]
-    if not (h1 < 0 and h2 < 0 and h3 < 0):  # 三天都是綠柱
-        return False
-    if not (abs(h1) > abs(h2) > abs(h3) and -3 <= h3 < 0):
-        return False
-    return True
-
 
 # === 主流程 ===
 def main():
     start_time = time.time()
-    main_results = []
-    watch_results = []
-    failed = []
+    main_results, watch_results, backtest_results, failed = [], [], [], []
 
-    print(f"\n開始抓取 {len(tickers)} 檔股票...\n")
+    print(f"開始抓取 {len(tickers)} 檔股票...\n")
 
     for i, tk in enumerate(tickers, start=1):
-        print(f"[{i}/{len(tickers)}] 抓取 {tk} ...")
+        print(f"[{i}/{len(tickers)}] {tk}")
         try:
             df = yf.Ticker(tk).history(period="6mo", interval="1d")
             if df.empty:
-                print(f"⚠️ {tk} 無資料，可能暫停交易或下市")
-                failed.append((tk, "Empty DataFrame"))
+                failed.append((tk, "No Data"))
                 continue
 
-            # 儲存快取
-            cache_file = os.path.join(CACHE_DIR, f"{tk}.csv")
-            df.to_csv(cache_file)
-            print(f"  ↳ 已更新快取: {cache_file}")
+            df_week = yf.Ticker(tk).history(period="1y", interval="1wk")
+            if df_week.empty:
+                failed.append((tk, "No Weekly Data"))
+                continue
 
-            # 計算 MACD 並判斷
             df = calc_macd(df)
-            if df.empty:
-                continue
+            df = calc_rsi(df)
+            df = calc_atr(df)
+            df_week = calc_macd(df_week)
+            info = yf.Ticker(tk).info or {}
 
-            if check_macd_main(df):
+            if df.empty: continue
+            if check_macd_main(df, df_week, info):
                 last = df.iloc[-1]
+                pe = info.get("trailingPE", "N/A")
+                growth = info.get("revenueGrowth", "N/A")
+                atr = round(last["ATR"], 2)
+                stop_loss = round(last["Close"] - 2 * atr, 2)
+                take_profit = round(last["Close"] + 3 * atr, 2)
                 main_results.append({
                     "Ticker": tk,
                     "LastDate": df.index[-1].strftime("%Y-%m-%d"),
                     "MACD": round(last["MACD"], 2),
                     "Signal": round(last["Signal"], 2),
-                    "Hist": round(last["Hist"], 2)
+                    "Hist": round(last["Hist"], 2),
+                    "ATR": atr,
+                    "StopLoss": stop_loss,
+                    "TakeProfit": take_profit,
+                    "PE": pe,
+                    "RevenueGrowth": growth
                 })
-                print(f"  ✅ {tk} 符合【主策略】")
-
-            elif check_macd_watchlist(df):
-                last = df.iloc[-1]
-                watch_results.append({
-                    "Ticker": tk,
-                    "LastDate": df.index[-1].strftime("%Y-%m-%d"),
-                    "MACD": round(last["MACD"], 2),
-                    "Signal": round(last["Signal"], 2),
-                    "Hist": round(last["Hist"], 2)
-                })
-                print(f"  👀 {tk} 符合【觀察池】")
-
+                print(f"  ✅ {tk} 符合主策略")
             else:
                 print(f"  ℹ️ {tk} 不符合條件")
 
+            # === 回測部分 ===
+            df_all = yf.download(tk, period="2y", interval="1d")
+            if not df_all.empty:
+                df_all = calc_macd(df_all)
+                roi = simple_backtest(df_all)
+                backtest_results.append({"Ticker": tk, "ROI(%)": roi})
+
         except Exception as e:
-            print(f"❌ {tk} 抓取錯誤: {e}")
             failed.append((tk, str(e)))
 
-        # 避免被 Yahoo 封鎖
         time.sleep(random.uniform(0.8, 1.2))
 
     # === 輸出結果 ===
     date_str = datetime.now().strftime("%Y-%m-%d")
-    main_csv = os.path.join(OUTPUT_DIR, f"macd_main_{date_str}.csv")
-    watch_csv = os.path.join(OUTPUT_DIR, f"macd_watchlist_{date_str}.csv")
-    log_file = os.path.join(LOG_DIR, f"fetch_log_{date_str}.txt")
+    out_main = os.path.join(OUTPUT_DIR, f"macd_main_{date_str}.csv")
+    out_watch = os.path.join(OUTPUT_DIR, f"macd_watchlist_{date_str}.csv")
+    out_backtest = os.path.join(OUTPUT_DIR, f"macd_backtest_{date_str}.csv")
+    log_file = os.path.join(LOG_DIR, f"log_{date_str}.txt")
 
-    def write_csv(file_path, data_list, tag):
-        if len(data_list) == 0:
-            df_out = pd.DataFrame([{
-                "Ticker": "N/A", "LastDate": "N/A",
-                "MACD": "N/A", "Signal": "N/A", "Hist": "N/A"
-            }])
-        else:
-            df_out = pd.DataFrame(data_list)
-        df_out.to_csv(file_path, index=False, encoding="utf-8-sig")
-        print(f"📄 已輸出 {tag}: {file_path}")
+    pd.DataFrame(main_results or [{"Ticker": "N/A"}]).to_csv(out_main, index=False, encoding="utf-8-sig")
+    pd.DataFrame(watch_results or [{"Ticker": "N/A"}]).to_csv(out_watch, index=False, encoding="utf-8-sig")
+    pd.DataFrame(backtest_results or [{"Ticker": "N/A"}]).to_csv(out_backtest, index=False, encoding="utf-8-sig")
 
-    write_csv(main_csv, main_results, "主策略結果")
-    write_csv(watch_csv, watch_results, "觀察池結果")
-
-    # === Log Summary ===
     duration = round((time.time() - start_time) / 60, 2)
-    summary = [
-        f"=== MACD 抓取任務完成 {date_str} ===",
-        f"總股票數: {len(tickers)}",
-        f"成功更新: {len(tickers) - len(failed)}",
-        f"抓取失敗: {len(failed)}",
-        f"符合主策略: {len(main_results)}",
-        f"符合觀察池: {len(watch_results)}",
-        f"總執行時間: {duration} 分鐘",
-        "",
-        "=== 抓取失敗清單 ==="
-    ]
-    for tk, reason in failed:
-        summary.append(f"- {tk} → {reason}")
-
+    summary = f"""
+=== MACD Pro 選股任務完成 {date_str} ===
+總股票數: {len(tickers)}
+成功更新: {len(tickers) - len(failed)}
+符合主策略: {len(main_results)}
+回測完成: {len(backtest_results)}
+執行時間: {duration} 分鐘
+"""
+    print(summary)
     with open(log_file, "w", encoding="utf-8") as f:
-        f.write("\n".join(summary))
-
-    print("\n".join(summary))
-    print(f"\n📘 Log 已儲存：{log_file}")
-    print(f"📄 主策略結果：{main_csv}")
-    print(f"📄 觀察池結果：{watch_csv}")
-
+        f.write(summary)
 
 if __name__ == "__main__":
     main()
