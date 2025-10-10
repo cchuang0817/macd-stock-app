@@ -1,79 +1,111 @@
-import streamlit as st
-import pandas as pd
 import os
+import pandas as pd
+import streamlit as st
 from datetime import datetime
 
-# === 路徑設定 ===
+# === 基本設定 ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
+COMPANY_FILE = os.path.join(BASE_DIR, "company_info.csv")
 
-st.set_page_config(page_title="MACD 指標監控", layout="wide")
+st.set_page_config(page_title="MACD Pro v2.1 Dashboard", layout="wide")
 
-st.title("📊 MACD 選股結果瀏覽器")
+st.title("📊 MACD Pro v2.1 — 放寬條件篩選結果")
+st.markdown("""
+顯示每日自動分析結果（放寬條件版）  
+版本：**v2.1 (Relaxed Conditions)**  
+---
+""")
 
-# === 載入公司對照表 ===
-company_file = os.path.join(BASE_DIR, "company_info.csv")
-if not os.path.exists(company_file):
-    st.error("找不到 company_info.csv，請確認放在 data 資料夾中。")
+# === 檢查資料夾 ===
+if not os.path.exists(DATA_DIR):
+    st.error("❌ 找不到 data 資料夾，請確認資料是否存在。")
     st.stop()
 
-df_company = pd.read_csv(company_file)
-
-# === 搜尋可用日期 ===
+# === 讀取所有分析結果 ===
 files = sorted(
     [f for f in os.listdir(DATA_DIR) if f.startswith("macd_main_") and f.endswith(".csv")],
     reverse=True
 )
-if not files:
-    st.warning("目前 data 資料夾中找不到任何 MACD 結果檔案。")
+
+if len(files) == 0:
+    st.warning("⚠️ 尚無分析結果，請先執行 fetch_stock_data_pro_v2.1.py")
     st.stop()
 
-# 取出日期清單
+# === 日期選擇器 ===
 dates = [f.replace("macd_main_", "").replace(".csv", "") for f in files]
-selected_date = st.selectbox("📅 選擇日期", dates)
+selected_date = st.selectbox("📅 選擇日期", dates, index=0)
+selected_file = os.path.join(DATA_DIR, f"macd_main_{selected_date}.csv")
 
-# === 讀取主策略與觀察池 ===
-main_file = os.path.join(DATA_DIR, f"macd_main_{selected_date}.csv")
-watch_file = os.path.join(DATA_DIR, f"macd_watchlist_{selected_date}.csv")
+st.info(f"載入分析結果：`{selected_file}`")
 
-df_main = pd.read_csv(main_file)
-df_watch = pd.read_csv(watch_file)
+# === 讀取主策略資料 ===
+try:
+    df = pd.read_csv(selected_file)
+except Exception as e:
+    st.error(f"❌ 無法讀取檔案：{e}")
+    st.stop()
 
-# === 比對公司中文名稱與產業 ===
-def merge_company_info(df):
-    if df.empty or "Ticker" not in df.columns:
-        return df
-    df = pd.merge(df, df_company, on="Ticker", how="left")
-    # 排序欄位順序（中文名稱、產業、MACD、Signal、Hist）
-    cols = ["Ticker", "Name", "Industry", "MACD", "Signal", "Hist", "LastDate"]
-    return df[[c for c in cols if c in df.columns]]
+if df.empty or df.iloc[0]["Ticker"] == "N/A":
+    st.warning("📭 當天無符合主策略的股票。")
+    st.stop()
 
-df_main_merged = merge_company_info(df_main)
-df_watch_merged = merge_company_info(df_watch)
-
-# === 顯示統計摘要 ===
-col1, col2 = st.columns(2)
-with col1:
-    st.metric("主策略符合數", len(df_main_merged))
-with col2:
-    st.metric("觀察池符合數", len(df_watch_merged))
-
-st.markdown("---")
-
-# === 顯示主策略表格 ===
-st.subheader("✅ 主策略（高勝率篩選）")
-if df_main_merged.empty or df_main_merged["Ticker"].iloc[0] == "N/A":
-    st.info("目前沒有符合主策略條件的股票。")
+# === 嘗試讀取公司對照表 ===
+if os.path.exists(COMPANY_FILE):
+    df_company = pd.read_csv(COMPANY_FILE)
+    if "Ticker" in df_company.columns:
+        df = df.merge(df_company, on="Ticker", how="left")
+        if "Name" in df.columns and "Industry" in df.columns:
+            df = df[["Ticker", "Name", "Industry", "LastDate", "MACD", "Signal", "Hist",
+                     "ATR", "StopLoss", "TakeProfit", "RevenueGrowth"]]
 else:
-    st.dataframe(df_main_merged, use_container_width=True)
+    st.warning("⚠️ 未找到 company_info.csv，將僅顯示代號。")
 
-# === 顯示觀察池表格 ===
-st.subheader("👀 觀察池（潛在轉折候選）")
-if df_watch_merged.empty or df_watch_merged["Ticker"].iloc[0] == "N/A":
-    st.info("目前沒有符合觀察池條件的股票。")
-else:
-    st.dataframe(df_watch_merged, use_container_width=True)
+# === 資料顯示 ===
+st.subheader("📈 符合主策略的股票")
 
-# === 顯示來源說明 ===
+st.dataframe(
+    df.style.format({
+        "MACD": "{:.2f}",
+        "Signal": "{:.2f}",
+        "Hist": "{:.2f}",
+        "ATR": "{:.2f}",
+        "StopLoss": "{:.2f}",
+        "TakeProfit": "{:.2f}",
+        "RevenueGrowth": "{:.2%}" if df["RevenueGrowth"].dtype != object else "{}"
+    }),
+    use_container_width=True,
+    hide_index=True
+)
+
+# === 基本統計 ===
+st.markdown("### 📊 統計摘要")
+col1, col2, col3 = st.columns(3)
+col1.metric("符合股票數量", len(df))
+col2.metric("平均 MACD", round(df["MACD"].astype(float).mean(), 2))
+col3.metric("平均 Revenue 成長率", f"{round(df['RevenueGrowth'].astype(float).mean()*100,2)}%" if df["RevenueGrowth"].dtype != object else "N/A")
+
+# === 加值：篩選功能 ===
+st.markdown("### 🔍 進階篩選")
+col_a, col_b = st.columns(2)
+
+with col_a:
+    industry_filter = st.selectbox("選擇產業類別", ["全部"] + sorted(df["Industry"].dropna().unique().tolist()) if "Industry" in df.columns else ["全部"])
+with col_b:
+    name_filter = st.text_input("股票名稱關鍵字（支援模糊搜尋）", "")
+
+filtered_df = df.copy()
+if industry_filter != "全部" and "Industry" in df.columns:
+    filtered_df = filtered_df[filtered_df["Industry"] == industry_filter]
+if name_filter:
+    filtered_df = filtered_df[filtered_df["Name"].astype(str).str.contains(name_filter, case=False, na=False)]
+
+st.dataframe(
+    filtered_df,
+    use_container_width=True,
+    hide_index=True
+)
+
+# === Footer ===
 st.markdown("---")
-st.caption(f"資料來源：Yahoo Finance，自動生成日期：{selected_date}")
+st.caption(f"版本：MACD Pro v2.1 (Relaxed Conditions) ｜ 更新時間：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
