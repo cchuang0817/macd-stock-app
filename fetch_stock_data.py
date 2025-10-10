@@ -17,7 +17,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # === 股票清單讀取 ===
-tickers_file = os.path.join(BASE_DIR, "tickers_test.txt")
+tickers_file = os.path.join(BASE_DIR, "tickers_tw.txt")
 if not os.path.exists(tickers_file):
     print(f"❌ 找不到股票清單檔案：{tickers_file}")
     exit(1)
@@ -26,6 +26,22 @@ with open(tickers_file, "r", encoding="utf-8") as f:
     tickers = [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
 print(f"✅ 已載入股票清單：{len(tickers)} 檔\n")
+
+
+# === Cache 機制 ===
+def load_data_with_cache(ticker, period="6mo", interval="1d", cache_hours=24):
+    cache_file = os.path.join(CACHE_DIR, f"{ticker}_{interval}.csv")
+    if os.path.exists(cache_file):
+        age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+        if age_hours < cache_hours:
+            print(f"  ↳ 使用快取資料: {os.path.basename(cache_file)}")
+            return pd.read_csv(cache_file, index_col=0, parse_dates=True)
+    df = yf.Ticker(ticker).history(period=period, interval=interval)
+    if not df.empty:
+        df.to_csv(cache_file)
+        print(f"  ↳ 已更新快取: {os.path.basename(cache_file)}")
+    return df
+
 
 # === 技術指標函式 ===
 def calc_macd(df, fast=12, slow=26, signal=9):
@@ -52,7 +68,8 @@ def calc_atr(df, period=14):
     df["ATR"] = df["TR"].rolling(period).mean()
     return df
 
-# === 回測模組 ===
+
+# === 回測模組（僅主策略使用） ===
 def simple_backtest(df):
     balance, position = 100000, 0
     for i in range(1, len(df)):
@@ -67,7 +84,8 @@ def simple_backtest(df):
     roi = (final_value / 100000 - 1) * 100
     return round(roi, 2)
 
-# === 主策略判斷 ===
+
+# === 主策略條件 ===
 def check_macd_main(df, df_week, info):
     df = df.sort_index(ascending=True).copy()
 
@@ -122,24 +140,23 @@ def check_macd_main(df, df_week, info):
 
     return True
 
+
 # === 主流程 ===
 def main():
     start_time = time.time()
-    main_results, watch_results, backtest_results, failed = [], [], [], []
+    main_results, backtest_results, failed = [], [], []
 
     print(f"開始抓取 {len(tickers)} 檔股票...\n")
 
     for i, tk in enumerate(tickers, start=1):
         print(f"[{i}/{len(tickers)}] {tk}")
-        try:
-            df = yf.Ticker(tk).history(period="6mo", interval="1d")
-            if df.empty:
-                failed.append((tk, "No Data"))
-                continue
 
-            df_week = yf.Ticker(tk).history(period="1y", interval="1wk")
-            if df_week.empty:
-                failed.append((tk, "No Weekly Data"))
+        try:
+            df = load_data_with_cache(tk, period="6mo", interval="1d")
+            df_week = load_data_with_cache(tk, period="1y", interval="1wk")
+
+            if df.empty or df_week.empty:
+                failed.append((tk, "No Data"))
                 continue
 
             df = calc_macd(df)
@@ -149,6 +166,8 @@ def main():
             info = yf.Ticker(tk).info or {}
 
             if df.empty: continue
+
+            # === 主策略判斷 ===
             if check_macd_main(df, df_week, info):
                 last = df.iloc[-1]
                 pe = info.get("trailingPE", "N/A")
@@ -169,39 +188,42 @@ def main():
                     "RevenueGrowth": growth
                 })
                 print(f"  ✅ {tk} 符合主策略")
+
+                # === 僅主策略股票回測 ===
+                df_all = load_data_with_cache(tk, period="2y", interval="1d")
+                if not df_all.empty:
+                    df_all = calc_macd(df_all)
+                    roi = simple_backtest(df_all)
+                    backtest_results.append({"Ticker": tk, "ROI(%)": roi})
             else:
                 print(f"  ℹ️ {tk} 不符合條件")
 
-            # === 回測部分 ===
-            df_all = yf.download(tk, period="2y", interval="1d")
-            if not df_all.empty:
-                df_all = calc_macd(df_all)
-                roi = simple_backtest(df_all)
-                backtest_results.append({"Ticker": tk, "ROI(%)": roi})
-
         except Exception as e:
+            print(f"❌ {tk} 發生錯誤: {e}")
             failed.append((tk, str(e)))
 
+        # 避免被封鎖
         time.sleep(random.uniform(0.8, 1.2))
 
-    # === 輸出結果 ===
+    # === 結果輸出 ===
     date_str = datetime.now().strftime("%Y-%m-%d")
     out_main = os.path.join(OUTPUT_DIR, f"macd_main_{date_str}.csv")
-    out_watch = os.path.join(OUTPUT_DIR, f"macd_watchlist_{date_str}.csv")
     out_backtest = os.path.join(OUTPUT_DIR, f"macd_backtest_{date_str}.csv")
     log_file = os.path.join(LOG_DIR, f"log_{date_str}.txt")
 
     pd.DataFrame(main_results or [{"Ticker": "N/A"}]).to_csv(out_main, index=False, encoding="utf-8-sig")
-    pd.DataFrame(watch_results or [{"Ticker": "N/A"}]).to_csv(out_watch, index=False, encoding="utf-8-sig")
     pd.DataFrame(backtest_results or [{"Ticker": "N/A"}]).to_csv(out_backtest, index=False, encoding="utf-8-sig")
 
+    # === Log Summary ===
+    avg_roi = round(np.mean([b["ROI(%)"] for b in backtest_results]) if backtest_results else 0, 2)
     duration = round((time.time() - start_time) / 60, 2)
     summary = f"""
-=== MACD Pro 選股任務完成 {date_str} ===
+=== MACD Pro v2 任務完成 {date_str} ===
 總股票數: {len(tickers)}
-成功更新: {len(tickers) - len(failed)}
+成功處理: {len(tickers) - len(failed)}
 符合主策略: {len(main_results)}
-回測完成: {len(backtest_results)}
+回測樣本: {len(backtest_results)}
+平均回測報酬率: {avg_roi}%
 執行時間: {duration} 分鐘
 """
     print(summary)
