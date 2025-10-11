@@ -1,5 +1,4 @@
-yfinance
-pandas
 streamlit
-
-
+pandas
+yfinance
+plotly
