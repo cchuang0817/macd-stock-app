@@ -17,7 +17,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # === 股票清單讀取 ===
-tickers_file = os.path.join(BASE_DIR, "tickers_test.txt")
+tickers_file = os.path.join(BASE_DIR, "tickers_tw.txt")
 if not os.path.exists(tickers_file):
     print(f"❌ 找不到股票清單檔案：{tickers_file}")
     exit(1)
