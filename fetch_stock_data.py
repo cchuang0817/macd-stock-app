@@ -17,7 +17,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # === 股票清單讀取 ===
-tickers_file = os.path.join(BASE_DIR, "tickers_test.txt")
+tickers_file = os.path.join(BASE_DIR, "tickers_tw.txt")
 if not os.path.exists(tickers_file):
     print(f"❌ 找不到股票清單檔案：{tickers_file}")
     exit(1)
@@ -122,42 +122,46 @@ def calc_relative_strength(df_stock, df_index):
         score += 5
     return score
 
-# === 評分系統 ===
+# === 評分系統 (v3.1，含分項回傳) ===
 def calculate_priority_score(tk, df, df_week, info):
-    score = 0
+    pattern_score = 0
+    momentum_score = 0
+    fundamental_score = 0
+    rs_score = 0
+
     last = df.iloc[-1]
 
     # A. 形態完美度 (40)
     hist = last["Hist"]
-    if -0.1 <= hist < 0: score += 25
-    elif -0.5 <= hist < -0.1: score += 20
-    elif -1.0 <= hist < -0.5: score += 15
-    elif -2.0 <= hist < -1.0: score += 10
+    if -0.1 <= hist < 0: pattern_score += 25
+    elif -0.5 <= hist < -0.1: pattern_score += 20
+    elif -1.0 <= hist < -0.5: pattern_score += 15
+    elif -2.0 <= hist < -1.0: pattern_score += 10
 
     vol3 = df["Volume"].rolling(3).mean().iloc[-1]
     vol20 = df["Volume"].rolling(20).mean().iloc[-1]
     ratio = vol3 / vol20 if vol20 > 0 else 1
-    if ratio < 0.8: score += 15
-    elif ratio < 1.0: score += 10
-    elif ratio < 1.1: score += 5
+    if ratio < 0.8: pattern_score += 15
+    elif ratio < 1.0: pattern_score += 10
+    elif ratio < 1.1: pattern_score += 5
 
     # B. 動能強度 (30)
     rsi = last["RSI"]
-    if 65 <= rsi < 70: score += 15
-    elif 60 <= rsi < 65: score += 10
-    elif 50 <= rsi < 60: score += 5
+    if 65 <= rsi < 70: momentum_score += 15
+    elif 60 <= rsi < 65: momentum_score += 10
+    elif 50 <= rsi < 60: momentum_score += 5
 
     high52 = df["Close"].rolling(252, min_periods=1).max().iloc[-1]
     ratio = last["Close"] / high52 if high52 > 0 else 0
-    if ratio >= 0.9: score += 15
-    elif ratio >= 0.8: score += 10
-    elif ratio >= 0.7: score += 5
+    if ratio >= 0.9: momentum_score += 15
+    elif ratio >= 0.8: momentum_score += 10
+    elif ratio >= 0.7: momentum_score += 5
 
     # C. 基本面 + 相對強度 (30)
     growth = info.get("revenueGrowth", 0) or 0
-    if growth > 0.2: score += 15
-    elif growth > 0.1: score += 10
-    elif growth > 0: score += 5
+    if growth > 0.2: fundamental_score += 15
+    elif growth > 0.1: fundamental_score += 10
+    elif growth > 0: fundamental_score += 5
 
     # 相對強度
     if tk.endswith(".TW"):
@@ -165,9 +169,16 @@ def calculate_priority_score(tk, df, df_week, info):
     else:
         index_df = load_data_with_cache("^TWO", period="6mo")
     rs_score = calc_relative_strength(df, index_df)
-    score += rs_score
 
-    return round(score, 1)
+    total_score = pattern_score + momentum_score + fundamental_score + rs_score
+
+    return {
+        "Total": round(total_score, 1),
+        "Pattern": pattern_score,
+        "Momentum": momentum_score,
+        "Fundamental": fundamental_score,
+        "RS": rs_score
+    }
 
 # === 主流程 ===
 def main():
@@ -194,11 +205,16 @@ def main():
                 atr = round(last["ATR"], 2)
                 stop_loss = round(last["Close"] - 2 * atr, 2)
                 take_profit = round(last["Close"] + 3 * atr, 2)
-                score = calculate_priority_score(tk, df, df_week, info)
+
+                score_detail = calculate_priority_score(tk, df, df_week, info)
                 main_results.append({
                     "Ticker": tk,
                     "Date": df.index[-1].strftime("%Y-%m-%d"),
-                    "Score": score,
+                    "Score": score_detail["Total"],
+                    "Pattern": score_detail["Pattern"],
+                    "Momentum": score_detail["Momentum"],
+                    "Fundamental": score_detail["Fundamental"],
+                    "RS": score_detail["RS"],
                     "MACD": round(last["MACD"], 2),
                     "Signal": round(last["Signal"], 2),
                     "Hist": round(last["Hist"], 2),
@@ -208,7 +224,7 @@ def main():
                     "TakeProfit": take_profit,
                     "RevenueGrowth": round(info.get("revenueGrowth", 0) * 100, 1)
                 })
-                print(f"  ✅ {tk} 符合主策略, Score={score}")
+                print(f"  ✅ {tk} 符合主策略, Score={score_detail['Total']}")
 
                 df_all = load_data_with_cache(tk, period="2y", interval="1d")
                 if not df_all.empty:
@@ -243,7 +259,7 @@ def main():
     duration = round((time.time() - start_time) / 60, 2)
 
     summary = f"""
-=== MACD Pro v3.0 (Scoring System) ===
+=== MACD Pro v3.1 (Full Scoring System) ===
 完成時間: {date_str}
 總股票數: {len(tickers)}
 成功處理: {len(tickers) - len(failed)}
